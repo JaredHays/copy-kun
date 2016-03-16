@@ -309,7 +309,6 @@ class CopyKun(object):
     Check for posts that have been edited
     '''
     def check_edits(self):
-        id
         for db_post in self.database.get_posts_to_check_edits():
             db_content = db_post.content.get()
             rd_content = self.get_correct_reddit_object(db_content.permalink)
