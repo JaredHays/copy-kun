@@ -14,3 +14,7 @@ Copy-kun features:
 # Requirements
 
 Copy-kun depends on PRAW for reddit requests and peewee for database functionality
+
+# Setup
+
+Edit copykun_sample.cfg with your bot's account details and options, and rename the file "copykun.cfg".
