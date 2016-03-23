@@ -20,7 +20,7 @@ from random import randint
 # Set up logging 
 logging.basicConfig(filename = os.path.join(sys.path[0], "copykun.log"), format = "%(asctime)s %(message)s")
 logger = logging.getLogger("copykun")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 # Read the config file
 if not os.path.isfile(os.path.join(sys.path[0], "copykun.cfg")):
@@ -293,7 +293,7 @@ class CopyKun(object):
     def check_messages(self):
         for unread in reddit.get_unread(unset_has_mail = True, update_user = True):
             # Respond to summon
-            if summon_phrase and unread.subject.lower().startswith("username mention"):
+            if summon_phrase and (unread.subject.lower().startswith("username mention") or unread.subject.lower().startswith("comment reply")):
                 lines = [line for line in unread.body.split("\n") if line]
                 if len(lines) >= 2 and lines[0].lower().startswith(summon_phrase):
                     parent = self.get_correct_reddit_object("https://www.reddit.com" + unread.context)
@@ -396,13 +396,13 @@ def main():
     try:
         start = time.time()
         copykun.check_new_posts()
-        logger.info("check_new_posts: {:.2f}s".format(time.time() - start))
+        logger.debug("check_new_posts: {:.2f}s".format(time.time() - start))
         start = time.time()
         copykun.check_messages()
-        logger.info("check_messages: {:.2f}s".format(time.time() - start))
+        logger.debug("check_messages: {:.2f}s".format(time.time() - start))
         start = time.time()
         copykun.check_edits()
-        logger.info("check_edits: {:.2f}s".format(time.time() - start))
+        logger.debug("check_edits: {:.2f}s".format(time.time() - start))
     except KeyboardInterrupt:
         exit(0)
     except Exception as e:
