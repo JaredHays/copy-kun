@@ -46,8 +46,13 @@ forwarding_address = config.get("Reddit", "forwarding_address") if config.has_op
 summon_phrase = config.get("Reddit", "summon_phrase") if config.has_option("Reddit", "summon_phrase") else ""
 footer = config.get("Reddit", "footer") if config.has_option("Reddit", "footer") else ""
 
-link_regex = r"https?://(np\.|www\.)?reddit\.com/r/.*"
-short_link_regex = r"https?://redd\.it/(\w*)"
+link_regex = r"https?://(?:.+\.)?reddit\.com(?P<path>/r/[^?\s]*)(?P<query>\?[\w-]+(?:=[\w-]*)?(?:&[\w-]+(?:=[\w-]*)?)*)?"
+short_link_regex = r"https?://redd\.it/(?P<post_id>\w*)"
+
+def copykun_exception_hook(excType, excValue, traceback, logger = logger):
+   logger.error("**** EXCEPTION: ", exc_info = (excType, excValue, traceback))
+
+sys.excepthook = copykun_exception_hook
 
 class CannotCopyError(Exception):
     pass
@@ -62,14 +67,11 @@ class CopyKun(object):
     only lets you get submissions
     '''
     def get_correct_reddit_object(self, link):
-        if link[0:7] == "http://":
-            link = "https://" + link[7:]
-        if link[0:18] == "https://reddit.com":
-            link = "https://www.reddit.com" + link[18:]
-        if link[0:21] == "https://np.reddit.com":
-            link = "https://www.reddit.com" + link[21:]
-        # Strip out URL parameters to match permalink correctly
-        orig_url = link[0:link.find("?") if link.find("?") > -1 else len(link)]
+        match = re.search(link_regex, link, re.IGNORECASE)
+        if match:
+            orig_url = "https://www.reddit.com" + match.group("path")
+        else:
+            raise CannotCopyError("Failure parsing link for: \"" + link + "\"")
         try:
             link = reddit.get_submission(orig_url)
             # Check if link is to comment
@@ -98,6 +100,8 @@ class CopyKun(object):
     def get_post_to_copy(self, original_post):
         link = None
         post_id = None
+        if original_post.author and original_post.author.name == config.get("Reddit", "username"):
+            return None
         # Check self text for link to other sub
         if type(original_post) is praw.objects.Comment or original_post.is_self:
             text = original_post.body if type(original_post) is praw.objects.Comment else original_post.selftext 
@@ -108,9 +112,9 @@ class CopyKun(object):
             # Short link
             match = re.search(short_link_regex, text, re.IGNORECASE)
             if match:
-                post_id = match.group(1)
+                post_id = match.group("post_id")
         # Check url for reddit link 
-        elif original_post.domain == "reddit.com" or original_post.domain == "np.reddit.com":
+        elif original_post.domain.endswith("reddit.com"):
             link = original_post.url
         # Check url for shortened link
         elif original_post.domain == "redd.it":
@@ -300,6 +304,8 @@ class CopyKun(object):
                     if parent.subreddit == subreddit and not self.database.is_post_in_db(parent.submission.id + "+" + parent.id):
                         link = self.get_post_to_copy(parent)
                         self.copy_post(parent, link)
+                else:
+                    self.forward_message(unread)
             # Forward message
             else:
                 self.forward_message(unread)
@@ -381,14 +387,14 @@ class CopyKun(object):
                 except praw.errors.APIException as e:
                     db_content.last_checked = time.time()
                     db_content.edited = rd_content.edited
-                    db_content.update_interval = min(db_content.update_interval * 2, 16384)
+                    db_content.update_interval = min(db_content.update_interval * 2, 16384 * 2)
                     self.database.save_objects([db_content])
                     logger.exception("Failed to edit \"" + rd_reply.id + "\" in \"" + db_post.id.strip() + "\"")
             # Not edited since last check
             else:
                 db_content.last_checked = time.time() 
                 db_content.edited = rd_content.edited
-                db_content.update_interval = min(db_content.update_interval * 2, 16384)
+                db_content.update_interval = min(db_content.update_interval * 2, 16384 * 2)
                 self.database.save_objects([db_content])
     
 def main():
