@@ -35,6 +35,13 @@ COMMENT_TYPE_PREFIX = "t1_"
 # specified will split into (not counting empties)
 URL_LENGTH_WITH_COMMENT = 8
 
+# Message prefix for PRAW APIException when text is too long
+TEXT_TOO_LONG_PREFIX = "(TOO_LONG)"
+
+MAX_COMMENT_LENGTH = 10000;
+
+TEXT_DIVIDER = "\n\n----\n"
+
 user_agent = (config.get("Reddit", "user_agent"))
 
 reddit = praw.Reddit(user_agent = user_agent)
@@ -45,6 +52,7 @@ taglines = json.loads(config.get("Reddit", "taglines"), "utf-8") if config.has_o
 forwarding_address = config.get("Reddit", "forwarding_address") if config.has_option("Reddit", "forwarding_address") else ""
 summon_phrase = config.get("Reddit", "summon_phrase") if config.has_option("Reddit", "summon_phrase") else ""
 footer = config.get("Reddit", "footer") if config.has_option("Reddit", "footer") else ""
+too_long_msg = config.get("Reddit", "too_long_msg") if config.has_option("Reddit", "too_long_msg") else ""
 
 link_regex = r"https?://(?:.+\.)?reddit\.com(?P<path>/r/[^?\s]*)(?P<query>\?[\w-]+(?:=[\w-]*)?(?:&[\w-]+(?:=[\w-]*)?)*)?"
 short_link_regex = r"https?://redd\.it/(?P<post_id>\w*)"
@@ -222,21 +230,25 @@ class CopyKun(object):
             text = ""
             if taglines and len(taglines) > 0:
                 text += taglines[randint(0, len(taglines) - 1)] 
-            text += "\n\n----\n"
+            text += TEXT_DIVIDER
             if title:
                 text += title + "\n\n"
             if content:
-                text += content
-            text += "\n\n----\n\n"
+                # Check length <= max length - (text + 2 x divider + \n\n + footer)
+                if len(content) <= MAX_COMMENT_LENGTH - (len(text) + (2 * len(TEXT_DIVIDER)) + 2 + len(footer)):
+                    text += content
+                else:
+                    text += "> " + too_long_msg
+            text += TEXT_DIVIDER
             text += footer
+                
+            # ID is either post ID or post id + comment ID depending on type
+            parent_id = parent.id if type(parent) is praw.objects.Submission else parent.submission.id + "+" + parent.id
             try:
                 if type(parent) is praw.objects.Submission:
                     comment = parent.add_comment(text)
                 else:
                     comment = parent.reply(text)
-                
-                # ID is either post ID or post id + comment ID depending on type
-                parent_id = parent.id if type(parent) is praw.objects.Submission else parent.submission.id + "+" + parent.id
                 
                 db_post = Post.create(id = parent_id)
                 db_content = Content()
@@ -255,7 +267,7 @@ class CopyKun(object):
                 db_reply.save()
                 
                 logger.info("Successfully copied \"" + link.id + "\" to \"" + parent_id + "\"")
-            except praw.errors.APIException:
+            except praw.errors.APIException as e:
                 logger.exception("Failed to copy \"" + link.id + "\" to \"" + parent_id + "\"")
 
     ''' 
