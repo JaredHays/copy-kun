@@ -73,42 +73,6 @@ class Database(object):
 	
 	def create_tables(self):
 		database.create_tables([Post, Content, Reply, Edit])
-		
-	def convert_json(self):
-		if not os.path.isfile(os.path.join(sys.path[0], "replied_posts.json")):
-			return
-			
-		with open(os.path.join(sys.path[0], "replied_posts.json"), "r") as f:
-			replied_posts = json.load(f)
-		for id in replied_posts:
-			if Post.select().where(Post.id == id).exists():
-				continue
-			print(id)
-			replied_post = replied_posts[id]
-			with database.transaction():
-				post = Post.create(
-					id = id
-				)
-				content = Content.create(
-					permalink = replied_post["permalink"],
-					created = replied_post["created_utc"],
-					edited = None if not replied_post["edited"] else replied_post["edited"],
-					last_checked = replied_post["last_checked"],
-					update_interval = replied_post["update_interval"],
-					post = post
-				)
-				reply = Reply.create(
-					permalink = replied_post["reply"],
-					latest_content = replied_post["latest_content"],
-					post = post
-				)
-				for edit in replied_post["edit_history"]:
-					edit = Edit.create(
-						content = edit,
-						# ex: "Edited @ 09/03/2016 17:00:36"
-						edit_time = datetime.strptime(edit[9:28], "%d/%m/%Y %H:%M:%S").replace(tzinfo = timezone.utc).timestamp(),
-						post = post
-					)
 
 	'''
 	Check if a given post exists in the database
