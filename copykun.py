@@ -47,9 +47,12 @@ user_agent = (config.get("Reddit", "user_agent"))
 reddit = praw.Reddit(user_agent = user_agent)
 reddit.login(config.get("Reddit", "username"), config.get("Reddit", "password"), disable_warning = True)
 subreddit = reddit.get_subreddit(config.get("Reddit", "subreddit"))
+post_limit = int(config.get("Reddit", "post_limit"))
 
 taglines = json.loads(config.get("Reddit", "taglines"), "utf-8") if config.has_option("Reddit", "taglines") else None
 forwarding_address = config.get("Reddit", "forwarding_address") if config.has_option("Reddit", "forwarding_address") else ""
+auto_copy = bool(config.get("Reddit", "auto_copy")) if config.has_option("Reddit", "auto_copy") else False
+comment_limit = int(config.get("Reddit", "comment_limit")) if config.has_option("Reddit", "comment_limit") else 128
 summon_phrase = config.get("Reddit", "summon_phrase") if config.has_option("Reddit", "summon_phrase") else ""
 footer = config.get("Reddit", "footer") if config.has_option("Reddit", "footer") else ""
 error_msg = config.get("Reddit", "error_msg") if config.has_option("Reddit", "error_msg") else ""
@@ -277,7 +280,7 @@ class CopyKun(object):
     Check for new posts to copy 
     '''
     def check_new_posts(self):
-        for post in subreddit.get_new(limit = 16):
+        for post in subreddit.get_new(limit = post_limit):
             if not self.database.is_post_in_db(post.id):
                 try:
                     link = self.get_post_to_copy(post)
@@ -325,6 +328,22 @@ class CopyKun(object):
             else:
                 self.forward_message(unread)
             unread.mark_as_read()
+            
+    '''
+    Check for new links to copy in comments
+    '''
+    def check_new_comments(self):
+        for comment in subreddit.get_comments(limit = comment_limit):
+            id = comment.submission.id + "+" + comment.id
+            if not self.database.is_post_in_db(id):
+                try:
+                    link = self.get_post_to_copy(comment)
+                except CannotCopyError:
+                    ignore = Post.create(id = id)
+                    continue
+                # Found comment with link to copy
+                if link:
+                    self.copy_post(comment, link)
             
     '''
     Check for posts that have been edited
@@ -405,6 +424,9 @@ class CopyKun(object):
                     db_content.update_interval = min(db_content.update_interval * 2, 16384 * 2)
                     self.database.save_objects([db_content])
                     logger.exception("Failed to edit \"" + rd_reply.id + "\" in \"" + db_post.id.strip() + "\"")
+                except peewee.OperationalError as e:
+                    logger.exception("Failed to save \"" + rd_reply.id + "\" in \"" + db_post.id.strip() + "\"")
+                    pass
             # Not edited since last check
             else:
                 db_content.last_checked = time.time() 
@@ -421,6 +443,10 @@ def main():
         start = time.time()
         copykun.check_messages()
         logger.debug("check_messages: {:.2f}s".format(time.time() - start))
+        if auto_copy:
+            start = time.time()
+            copykun.check_new_comments()
+            logger.debug("check_new_comments: {:.2f}s".format(time.time() - start))
         start = time.time()
         copykun.check_edits()
         logger.debug("check_edits: {:.2f}s".format(time.time() - start))
