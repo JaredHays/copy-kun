@@ -24,7 +24,7 @@ config = configparser.ConfigParser()
 with codecs.open(os.path.join(sys.path[0], "copykun.cfg"), "r", "utf8") as f:
     config.read_file(f)
 
-database = SqliteDatabase(os.path.join(sys.path[0], config.get("Database", "db_name")))
+database = SqliteDatabase(os.path.join(sys.path[0], config.get("Database", "db_name")), threadlocals = True)
 
 class BaseModel(Model):
     class Meta:
@@ -85,7 +85,7 @@ class Database(object):
     '''
     def get_posts_to_check_edits(self):
         now = datetime.utcnow().timestamp()
-        cutoff = (datetime.utcnow() + timedelta(-30)).timestamp()
+        cutoff = (datetime.utcnow() + timedelta(-7)).timestamp()
         posts = Post.select().join(Content).where(now > Content.last_checked + Content.update_interval and Content.created >= cutoff)
         return posts
             

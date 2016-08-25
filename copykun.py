@@ -9,6 +9,7 @@ import praw
 import pdb
 import re
 import os
+import peewee
 import sys
 import time
 import traceback
@@ -45,7 +46,8 @@ TEXT_DIVIDER = "\n\n----\n"
 user_agent = (config.get("Reddit", "user_agent"))
 
 reddit = praw.Reddit(user_agent = user_agent)
-reddit.login(config.get("Reddit", "username"), config.get("Reddit", "password"), disable_warning = True)
+user_name = config.get("Reddit", "username")
+reddit.login(user_name, config.get("Reddit", "password"), disable_warning = True)
 subreddit = reddit.get_subreddit(config.get("Reddit", "subreddit"))
 post_limit = int(config.get("Reddit", "post_limit"))
 
@@ -57,8 +59,8 @@ summon_phrase = config.get("Reddit", "summon_phrase") if config.has_option("Redd
 footer = config.get("Reddit", "footer") if config.has_option("Reddit", "footer") else ""
 error_msg = config.get("Reddit", "error_msg") if config.has_option("Reddit", "error_msg") else ""
 
-link_regex = r"https?://(?:.+\.)?reddit\.com(?P<path>/r/[^?\s]*)(?P<query>\?[\w-]+(?:=[\w-]*)?(?:&[\w-]+(?:=[\w-]*)?)*)?"
-short_link_regex = r"https?://redd\.it/(?P<post_id>\w*)"
+link_regex = r"(?:https?://)(?:.+\.)?reddit\.com(?P<path>/r/(?P<subreddit>\w+)/comments/[^?\s()]*)(?P<query>\?[\w-]+(?:=[\w-]*)?(?:&[\w-]+(?:=[\w-]*)?)*)?"
+short_link_regex = r"(?:https?://)redd\.it/(?P<post_id>\w*)"
 
 def copykun_exception_hook(excType, excValue, traceback, logger = logger):
    logger.error("**** EXCEPTION: ", exc_info = (excType, excValue, traceback))
@@ -209,10 +211,9 @@ class CopyKun(object):
         for comment_id in comment_id_list[::-1]:
             # Author account exists
             if comments[comment_id].author:
+                author = "/u/" + comments[comment_id].author.name
                 if comments[comment_id].author.name == op_name:
-                    author = "OP"
-                else:
-                    author = "/u/" + comments[comment_id].author.name
+                    author += " (OP)"
             # Author account deleted
             else:
                 author = "[deleted]"
@@ -335,7 +336,7 @@ class CopyKun(object):
     def check_new_comments(self):
         for comment in subreddit.get_comments(limit = comment_limit):
             id = comment.submission.id + "+" + comment.id
-            if not self.database.is_post_in_db(id):
+            if not self.database.is_post_in_db(id) and not comment.author.name == user_name:
                 try:
                     link = self.get_post_to_copy(comment)
                 except CannotCopyError:
@@ -344,12 +345,17 @@ class CopyKun(object):
                 # Found comment with link to copy
                 if link:
                     self.copy_post(comment, link)
+                else:
+                    ignore = Post.create(id = id)
             
     '''
     Check for posts that have been edited
     '''
     def check_edits(self):
+        i = 0
         for db_post in self.database.get_posts_to_check_edits():
+            if i > 8:
+                return
             db_content = db_post.content.get()
             rd_content = self.get_correct_reddit_object(db_content.permalink)
             if not rd_content:
@@ -426,13 +432,18 @@ class CopyKun(object):
                     logger.exception("Failed to edit \"" + rd_reply.id + "\" in \"" + db_post.id.strip() + "\"")
                 except peewee.OperationalError as e:
                     logger.exception("Failed to save \"" + rd_reply.id + "\" in \"" + db_post.id.strip() + "\"")
-                    pass
+                    #pass
             # Not edited since last check
             else:
                 db_content.last_checked = time.time() 
                 db_content.edited = rd_content.edited
                 db_content.update_interval = min(db_content.update_interval * 2, 16384 * 2)
-                self.database.save_objects([db_content])
+                try:
+                    self.database.save_objects([db_content])                
+                except peewee.OperationalError as e:
+                    logger.exception("Failed to save \"" + db_post.id.strip() + "\"")
+                    #pass
+            i = i + 1
     
 def main():
     copykun = CopyKun()
