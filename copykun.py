@@ -45,9 +45,19 @@ TEXT_DIVIDER = "\n\n----\n"
 
 user_agent = (config.get("Reddit", "user_agent"))
 
-reddit = praw.Reddit(user_agent = user_agent)
-user_name = config.get("Reddit", "username")
-reddit.login(user_name, config.get("Reddit", "password"), disable_warning = True)
+# use for multi processing see https://praw.readthedocs.io/en/v3.4.0/pages/multiprocess.html
+# handle = MultiprocessHandler('127.0.0.1', 65000)
+reddit = praw.Reddit(
+    user_agent=user_agent,
+    log_requests=config.get("Reddit" ,"log_requests"),
+    # multi processing
+    #handle=handle,
+    site_name=self.config.get_value("Reddit", "site_name")
+)
+
+if not reddit.refresh_access_information(update_session=True):
+    raise RuntimeError
+    
 subreddit = reddit.get_subreddit(config.get("Reddit", "subreddit"))
 post_limit = int(config.get("Reddit", "post_limit"))
 

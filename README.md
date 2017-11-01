@@ -17,4 +17,4 @@ Copy-kun depends on PRAW for reddit requests and peewee for database functionali
 
 # Setup
 
-Edit copykun_sample.cfg with your bot's account details and options, and rename the file "copykun.cfg".
+Edit copykun_sample.cfg and example.praw.ini with your bot's account details and options, and rename the files to "copykun.cfg" and "praw.ini" respectively.
