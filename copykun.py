@@ -59,6 +59,9 @@ summon_phrase = config.get("Reddit", "summon_phrase") if config.has_option("Redd
 footer = config.get("Reddit", "footer") if config.has_option("Reddit", "footer") else ""
 error_msg = config.get("Reddit", "error_msg") if config.has_option("Reddit", "error_msg") else ""
 
+ignore_users = set(json.loads(config.get("Reddit", "ignore_users"), "utf-8") if config.has_option("Reddit", "ignore_users") else [])
+ignore_users.add(user_name)
+
 link_regex = r"(?:https?://)(?:.+\.)?reddit\.com(?P<path>/r/(?P<subreddit>\w+)/comments/[^?\s()]*)(?P<query>\?[\w-]+(?:=[\w-]*)?(?:&[\w-]+(?:=[\w-]*)?)*)?"
 short_link_regex = r"(?:https?://)redd\.it/(?P<post_id>\w*)"
 
@@ -113,7 +116,7 @@ class CopyKun(object):
     def get_post_to_copy(self, original_post):
         link = None
         post_id = None
-        if original_post.author and original_post.author.name == config.get("Reddit", "username"):
+        if original_post.author and original_post.author.name in ignore_users:
             return None
         # Check self text for link to other sub
         if type(original_post) is praw.objects.Comment or original_post.is_self:
@@ -336,7 +339,7 @@ class CopyKun(object):
     def check_new_comments(self):
         for comment in subreddit.get_comments(limit = comment_limit):
             id = comment.submission.id + "+" + comment.id
-            if not self.database.is_post_in_db(id) and not comment.author.name == user_name:
+            if not self.database.is_post_in_db(id):
                 try:
                     link = self.get_post_to_copy(comment)
                 except CannotCopyError:
