@@ -6,6 +6,7 @@ import difflib
 import json
 import logging
 import praw
+import prawcore
 import pdb
 import re
 import os
@@ -44,21 +45,17 @@ MAX_COMMENT_LENGTH = 10000;
 TEXT_DIVIDER = "\n\n----\n"
 
 user_agent = (config.get("Reddit", "user_agent"))
+username = (config.get("Reddit", "username"))
 
-# use for multi processing see https://praw.readthedocs.io/en/v3.4.0/pages/multiprocess.html
-# handle = MultiprocessHandler('127.0.0.1', 65000)
 reddit = praw.Reddit(
     user_agent=user_agent,
-    log_requests=config.get("Reddit" ,"log_requests"),
-    # multi processing
-    #handle=handle,
-    site_name=self.config.get_value("Reddit", "site_name")
+    client_id=config.get("OAuth", "client_id"),
+    client_secret=config.get("OAuth", "client_secret"),
+    password=config.get("Reddit", "password"),
+    username=config.get("Reddit", "username")
 )
-
-if not reddit.refresh_access_information(update_session=True):
-    raise RuntimeError
     
-subreddit = reddit.get_subreddit(config.get("Reddit", "subreddit"))
+subreddit = reddit.subreddit(config.get("Reddit", "subreddit"))
 post_limit = int(config.get("Reddit", "post_limit"))
 
 taglines = json.loads(config.get("Reddit", "taglines"), "utf-8") if config.has_option("Reddit", "taglines") else None
@@ -70,9 +67,9 @@ footer = config.get("Reddit", "footer") if config.has_option("Reddit", "footer")
 error_msg = config.get("Reddit", "error_msg") if config.has_option("Reddit", "error_msg") else ""
 
 ignore_users = set(json.loads(config.get("Reddit", "ignore_users"), "utf-8") if config.has_option("Reddit", "ignore_users") else [])
-ignore_users.add(user_name)
+ignore_users.add(username)
 
-link_regex = r"(?:https?://)(?:.+\.)?reddit\.com(?P<path>/r/(?P<subreddit>\w+)/comments/[^?\s()]*)(?P<query>\?[\w-]+(?:=[\w-]*)?(?:&[\w-]+(?:=[\w-]*)?)*)?"
+link_regex = r"((?:https?://)(?:.+\.)?reddit\.com)?(?P<path>/r/(?P<subreddit>\w+)/comments/[^?\s()]*)(?P<query>\?[\w-]+(?:=[\w-]*)?(?:&[\w-]+(?:=[\w-]*)?)*)?"
 short_link_regex = r"(?:https?://)redd\.it/(?P<post_id>\w*)"
 
 def copykun_exception_hook(excType, excValue, traceback, logger = logger):
@@ -99,7 +96,7 @@ class CopyKun(object):
         else:
             raise CannotCopyError("Failure parsing link for: \"" + link + "\"")
         try:
-            link = reddit.get_submission(orig_url)
+            link = reddit.submission(url=orig_url)
             # Check if link is to comment
             if link.comments and link.comments[0]:
                 orig_url_split = [x for x in orig_url.split("/") if len(x.strip()) > 0]
@@ -114,9 +111,9 @@ class CopyKun(object):
             else:
                 return link
         # PRAW can throw a KeyError if it can't parse response JSON or a RedirectException for certain non-post reddit links
-        except (KeyError, praw.errors.RedirectException) as e:
+        except (KeyError, prawcore.exceptions.Redirect) as e:
             raise CannotCopyError("Failure parsing JSON for: \"" + orig_url + "\" (safe to ignore if URL is a non-submission reddit link)")
-        except (TypeError, praw.errors.APIException, praw.errors.HTTPException) as e:
+        except (TypeError, praw.exceptions.APIException) as e:
             logger.exception("Failure fetching url: \"" + orig_url + "\"")
             return None
             
@@ -129,8 +126,8 @@ class CopyKun(object):
         if original_post.author and original_post.author.name in ignore_users:
             return None
         # Check self text for link to other sub
-        if type(original_post) is praw.objects.Comment or original_post.is_self:
-            text = original_post.body if type(original_post) is praw.objects.Comment else original_post.selftext 
+        if type(original_post) is praw.models.Comment or original_post.is_self:
+            text = original_post.body if type(original_post) is praw.models.Comment else original_post.selftext 
             # Regular link
             match = re.search(link_regex, text, re.IGNORECASE)
             if match:
@@ -155,8 +152,8 @@ class CopyKun(object):
         elif post_id:
             try:
                 # Short links can only be to posts so no comment test
-                return reddit.get_submission(submission_id = post_id)
-            except (TypeError, praw.errors.APIException) as e:
+                return reddit.submission(id = post_id)
+            except (TypeError, praw.exceptions.APIException) as e:
                 logger.exception("Failure fetching short url: \"" + original_post.url + "\"")
                 return None
         # Found nothing
@@ -167,7 +164,7 @@ class CopyKun(object):
     Get the text to be copied from a post or comment
     '''
     def get_post_text(self, post):
-        submission = post.submission if type(post) is praw.objects.Comment else post
+        submission = post.submission if type(post) is praw.models.Comment else post
         if submission:
             title = submission.title
         else:
@@ -181,7 +178,7 @@ class CopyKun(object):
         elif submission:
             content += submission.url + "\n"
         # Copy entire comment chain
-        if type(post) is praw.objects.Comment:
+        if type(post) is praw.models.Comment:
             try:
                 content += self.get_comment_chain(post)
             # Could not find a comment in the chain
@@ -263,12 +260,12 @@ class CopyKun(object):
             text += footer
                 
             # ID is either post ID or post id + comment ID depending on type
-            parent_id = parent.id if type(parent) is praw.objects.Submission else parent.submission.id + "+" + parent.id
+            parent_id = parent.id if type(parent) is praw.models.Submission else parent.submission.id + "+" + parent.id
             try:
-                if type(parent) is praw.objects.Submission:
-                    comment = parent.add_comment(text)
-                else:
-                    comment = parent.reply(text)
+                #if type(parent) is praw.models.Submission:
+                #    comment = parent.add_comment(text)
+                #else:
+                comment = parent.reply(text)
                 
                 db_post = Post.create(id = parent_id)
                 db_content = Content()
@@ -287,14 +284,14 @@ class CopyKun(object):
                 db_reply.save()
                 
                 logger.info("Successfully copied \"" + link.id + "\" to \"" + parent_id + "\"")
-            except praw.errors.APIException as e:
+            except praw.exceptions.APIException as e:
                 logger.exception("Failed to copy \"" + link.id + "\" to \"" + parent_id + "\"")
 
     ''' 
     Check for new posts to copy 
     '''
     def check_new_posts(self):
-        for post in subreddit.get_new(limit = post_limit):
+        for post in subreddit.new(limit = post_limit):
             if not self.database.is_post_in_db(post.id):
                 try:
                     link = self.get_post_to_copy(post)
@@ -318,16 +315,16 @@ class CopyKun(object):
         for para in message.body.split("\n"):
                     body += "> " + para + "\n"
         try:
-            reddit.send_message(forwarding_address, subject, body)
+            reddit.redditor(forwarding_address).message(subject, body)
             logger.info("Successfully forwarded message from /u/" + message.author.name)
-        except praw.errors.APIException:
+        except praw.exceptions.APIException:
             logger.exception("Failed to forward message from /u/" + message.author.name)
     
     '''
     Check any messages sent to the bot
     '''
     def check_messages(self):
-        for unread in reddit.get_unread(unset_has_mail = True, update_user = True):
+        for unread in reddit.inbox.unread(mark_read=True):
             # Respond to summon
             if summon_phrase and (unread.subject.lower().startswith("username mention") or unread.subject.lower().startswith("comment reply")):
                 lines = [line for line in unread.body.split("\n") if line]
@@ -341,13 +338,13 @@ class CopyKun(object):
             # Forward message
             else:
                 self.forward_message(unread)
-            unread.mark_as_read()
+            unread.mark_read()
             
     '''
     Check for new links to copy in comments
     '''
     def check_new_comments(self):
-        for comment in subreddit.get_comments(limit = comment_limit):
+        for comment in subreddit.comments(limit = comment_limit):
             id = comment.submission.id + "+" + comment.id
             if not self.database.is_post_in_db(id):
                 try:
@@ -437,7 +434,7 @@ class CopyKun(object):
                     self.database.save_objects([db_content, db_reply, edit])
                     
                     logger.info("Successfully edited \"" + rd_reply.id + "\" in \"" + db_post.id.strip() + "\"")
-                except praw.errors.APIException as e:
+                except praw.exceptions.APIException as e:
                     db_content.last_checked = time.time()
                     db_content.edited = rd_content.edited
                     db_content.update_interval = min(db_content.update_interval * 2, 16384 * 2)

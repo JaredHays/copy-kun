@@ -1,4 +1,11 @@
 copykun.cfg
 copykun.db
+copykun.log*
 cron.log
 pip-selfcheck.json
+praw.ini
+taglines*
+bin/
+include/
+lib/
+__pycache__/
