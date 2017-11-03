@@ -69,7 +69,7 @@ error_msg = config.get("Reddit", "error_msg") if config.has_option("Reddit", "er
 ignore_users = set(json.loads(config.get("Reddit", "ignore_users"), "utf-8") if config.has_option("Reddit", "ignore_users") else [])
 ignore_users.add(username)
 
-link_regex = r"((?:https?://)(?:.+\.)?reddit\.com)?(?P<path>/r/(?P<subreddit>\w+)/comments/[^?\s()]*)(?P<query>\?[\w-]+(?:=[\w-]*)?(?:&[\w-]+(?:=[\w-]*)?)*)?"
+link_regex = r"((?:https?://)(?:.+\.)?reddit\.com)?/r/(?P<subreddit>\w+)/comments/(?P<id>\w+)(/(?P<title>[^?\s()/]*)(/(?P<comment_id>\w+)?)?(/(?P<query>\?[\w-]+(?:=[\w-]*)?(?:&[\w-]+(?:=[\w-]*)?)*)?)?)?"
 short_link_regex = r"(?:https?://)redd\.it/(?P<post_id>\w*)"
 
 def copykun_exception_hook(excType, excValue, traceback, logger = logger):
@@ -91,25 +91,18 @@ class CopyKun(object):
     '''
     def get_correct_reddit_object(self, link):
         match = re.search(link_regex, link, re.IGNORECASE)
-        if match:
-            orig_url = "https://www.reddit.com" + match.group("path")
-        else:
+        if not match:
             raise CannotCopyError("Failure parsing link for: \"" + link + "\"")
         try:
-            link = reddit.submission(url=orig_url)
-            # Check if link is to comment
-            if link.comments and link.comments[0]:
-                orig_url_split = [x for x in orig_url.split("/") if len(x.strip()) > 0]
-                post_url_split = [x for x in link.comments[0].permalink.split("/") if len(x.strip()) > 0]
-                # Link is to comment
-                if orig_url == link.comments[0].permalink or (len(orig_url_split) == URL_LENGTH_WITH_COMMENT and len(post_url_split) == URL_LENGTH_WITH_COMMENT and orig_url_split[URL_LENGTH_WITH_COMMENT - 1] == post_url_split[URL_LENGTH_WITH_COMMENT - 1]):
-                    return link.comments[0]
-                # Link is to post
-                else:
-                    return link
+            # Link is to comment
+            if match.group("comment_id"):
+                return reddit.comment(match.group("comment_id"))
             # Link is to post
+            elif match.group("id"):
+                return reddit.submission(match.group("id"))
+            # Link is to neither
             else:
-                return link
+                raise CannotCopyError("Link was not post or comment: \"" + link + "\"")
         # PRAW can throw a KeyError if it can't parse response JSON or a RedirectException for certain non-post reddit links
         except (KeyError, prawcore.exceptions.Redirect) as e:
             raise CannotCopyError("Failure parsing JSON for: \"" + orig_url + "\" (safe to ignore if URL is a non-submission reddit link)")
@@ -195,42 +188,32 @@ class CopyKun(object):
     def get_comment_chain(self, post):
         submission = post.submission
         op_name = submission.author.name if submission.author else "[deleted]"
-        comments = {comment.id: comment for comment in praw.helpers.flatten_tree(submission.comments)}
-        comment_id_list = []
-        current_id = post.id
         
         # Build comment chain (in reverse)
-        fetched_more = False
-        while current_id != submission.id:
-            if current_id in comments:
-                comment_id_list.append(current_id)
-                # Slice id to remove type prefix
-                current_id = comments[current_id].parent_id[3:]
-            # Could not find a comment in the chain, so fetch more comments
-            elif not fetched_more:
-                submission.replace_more_comments(limit = None)
-                comments = {comment.id: comment for comment in praw.helpers.flatten_tree(submission.comments)}
-                fetched_more = True
-            # Still could not find a comment, so fetch it individually
-            else:
-                comment_url = submission.permalink + current_id
-                comment = self.get_correct_reddit_object(comment_url)
-                comments[comment.id] = comment
+        # NOTE: this can potentially make a lot of network requests since it has to fetch each parent
+        comment = post
+        comment_list = []
+        while not comment.is_root:
+            comment_list.append(comment)
+            comment = comment.parent()
+            comment.refresh()
+        
+        # Form chain text
         content = ""
         level = 2
-        for comment_id in comment_id_list[::-1]:
+        for comment in comment_list[::-1]:
             # Author account exists
-            if comments[comment_id].author:
-                author = "/u/" + comments[comment_id].author.name
-                if comments[comment_id].author.name == op_name:
+            if comment.author:
+                author = "/u/" + comment.author.name
+                if comment.author.name == op_name:
                     author += " (OP)"
             # Author account deleted
             else:
                 author = "[deleted]"
             content += ("> " * level) + author + ":\n\n"
             # Comment body exists
-            if comments[comment_id].body:
-                for para in comments[comment_id].body.split("\n"):
+            if comment.body:
+                for para in comment.body.split("\n"):
                     content += (">" * level) + para + "\n"
             # Comment body deleted
             else:
