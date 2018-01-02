@@ -192,11 +192,11 @@ class CopyKun(object):
         # Build comment chain (in reverse)
         # NOTE: this can potentially make a lot of network requests since it has to fetch each parent
         comment = post
-        comment_list = []
+        comment_list = [comment]
         while not comment.is_root:
-            comment_list.append(comment)
             comment = comment.parent()
             comment.refresh()
+            comment_list.append(comment)
         
         # Form chain text
         content = ""
